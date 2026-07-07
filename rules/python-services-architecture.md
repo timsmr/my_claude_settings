@@ -1,170 +1,89 @@
-# Python Services Architecture
+---
+paths:
+  - "**/*.py"
+---
 
-## Project Structure (Hexagonal / Ports & Adapters)
+# Python Services Architecture (Hexagonal / Ports & Adapters)
 
-```
-src/<service_name>/
-    domain/
-        entities/          — dataclasses, value objects, aggregates
-        errors.py          — domain-specific exceptions
-        ports.py           — abstract interfaces (protocols/ABCs)
-    application/
-        use_cases/         — orchestration of business logic
-        dto.py             — data transfer objects between layers
-    infrastructure/
-        adapters/          — implementations of domain ports (DB, API clients, queues)
-        config.py          — pydantic-settings based configuration
-    presentation/
-        api/               — HTTP handlers (FastAPI routers, etc.)
-        schemas.py         — Pydantic request/response models
-    main.py                — composition root, wiring everything together
-tests/
-    unit/                  — fast, no I/O, mocked dependencies
-    integration/           — real DB/services in containers
-    conftest.py
-```
+Scaffolding a new service or module? Use the `scaffold-python-service` skill
+(directory tree + config/DI/entrypoint recipes live there).
+
+## Layer Rules
+Imports (static): `domain` imports nothing outside domain; `application` imports
+`domain` only; `infrastructure` imports `application` + `domain`; `presentation`
+imports `application` (+ `domain` types); `main.py` imports everything and wires the graph.
+
+Injection (runtime): domain services → into use-cases; infrastructure adapters →
+into use-cases (typed by their ports); use-cases → into presentation handlers.
+
+All domain logic lives in `domain/`: logic is "domain" when it needs no other layer.
+The moment it calls a port or another layer, it is application logic.
+
+Placement: use-cases in `application/use_cases/`; adapters directly in
+`infrastructure/<adapter>.py` (NO `adapters/` subfolder); domain-only exceptions
+(raised AND handled inside domain) in `domain/errors.py`.
+- No real domain logic (proxy/gateway service)? Do not create `domain/` at all —
+  entities and errors live in `application/`.
+- Errors that cross the port boundary (infra raises → presentation maps) live in
+  `application/errors.py`, never in `domain/`.
+
+## Ports
+Ports (`Protocol`, suffixed `Port`) exist ONLY for infrastructure dependencies
+(DB, LLM, queues, storage, …). They describe **what** is needed, not **how**.
+- `application/ports/` is a package with one file per port (`ports/llm.py`,
+  `ports/inmemory_cache.py`).
+- Adapters explicitly inherit their port: `class LLM(LLMPort)`.
+- Use-cases are injected into presentation as concrete classes — no inbound
+  use-case ports, no `domain/ports/`.
+- Port signatures use domain/application types (enums, dataclasses), never raw
+  primitives; the adapter extracts `.value`/`.name` when formatting queries.
 
 ## Dependency Initialization
-STRICT RULE: No instance creation inside classes.
-
-All instances are created in `main.py` (composition root) and passed as constructor arguments.
-A class never does `self._repo = SomeRepository()` inside `__init__`.
-
-Good:
-```python
-@dataclass
-class CreateOrderUseCase:
-    """Orchestrate order creation flow."""
-
-    order_repo: OrderRepository
-    payment: PaymentGateway
-```
-
-Bad:
-```python
-class CreateOrderUseCase:
-    def __init__(self) -> None:
-        self._order_repo = SQLAlchemyOrderRepository()
-        self._payment = StripePaymentClient()
-```
-
-## Ports (Domain Interfaces)
-Ports are defined in the domain layer as `Protocol` or `ABC`. They describe **what** the domain needs, not **how** it's implemented.
-
-```python
-from typing import Protocol
-
-
-class OrderRepository(Protocol):
-    """Persistence contract for orders."""
-
-    async def get_by_id(self, order_id: OrderId) -> Order | None: ...
-    async def save(self, order: Order) -> None: ...
-
-
-class PaymentGateway(Protocol):
-    """External payment processing contract."""
-
-    async def charge(self, amount: Decimal, token: str) -> PaymentResult: ...
-```
-
-Adapters in `infrastructure/` implement these ports. The domain layer never imports from infrastructure.
-
-## Configuration
-
-### Application & Infrastructure
-Use `pydantic-settings` for all configuration outside of domain modules.
-
-```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class DatabaseSettings(BaseSettings):
-    """Database connection parameters."""
-
-    model_config = SettingsConfigDict(env_prefix="DB_")
-
-    host: str = "localhost"
-    port: int = 5432
-    name: str
-    user: str
-    password: str
-
-    @property
-    def dsn(self) -> str:
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
-```
-
-### Domain Config
-Domain modules must NOT depend on `pydantic-settings`. Use `dataclasses` to keep the domain layer free of infrastructure dependencies.
-
-```python
-from dataclasses import dataclass
-from decimal import Decimal
-
-
-@dataclass(frozen=True)
-class OrderPolicyConfig:
-    """Business rules for order processing."""
-
-    max_items_per_order: int = 100
-    auto_cancel_after_minutes: int = 30
-    free_shipping_threshold: Decimal = Decimal("50.00")
-```
-
-### Composition Root
-Settings are instantiated in `main.py` and injected into services/use-cases. Classes never read environment variables directly.
+STRICT RULE: no instance creation inside classes. All instances are created in the
+composition root and passed as constructor arguments — a class never does
+`self._repo = SomeRepository()` in `__init__`.
+- Explicit `__init__` storing deps as private attributes (`self._x`), not a `@dataclass`.
+- Name each dependency by its role (`llm`, not `backend`).
+- `__init__` takes static dependencies (config, ports, clients); method parameters
+  take runtime data (user input, request payload, raw DB results).
+- Merge closely related use-cases into one class with several public methods
+  sharing private helpers.
 
 ## Adapter Responsibility
-STRICT RULE: Infrastructure adapters return raw data only. No domain-specific filtering or transformation.
-
-Allowed:
-```python
-def fetch_events(self, time_from: datetime, time_to: datetime) -> pl.DataFrame:
-    """Fetch raw events from ClickHouse."""
-    data = self.client.execute(query)
-    return pl.DataFrame(data, schema=columns)
-```
-
-Forbidden:
-```python
-def fetch_events(self, time_from: datetime, time_to: datetime) -> pl.DataFrame:
-    """Fetch events and apply domain filtering."""
-    data = self.client.execute(query)
-    df = pl.DataFrame(data, schema=columns)
-    return df.filter(pl.col("score") > self.threshold)
-```
-
+STRICT RULE: infrastructure adapters return raw data only — no domain-specific
+filtering or transformation inside adapters.
 Data flow: infrastructure (raw) → use-case (orchestration) → domain (processing).
+Every external I/O call sets an explicit timeout; retry/backoff policies are
+config fields, never hardcoded.
 
-## Constructor vs Method Parameters
-- `__init__`: static dependencies (config, locales, ports, clients)
-- Method parameters: runtime data (raw DB results, user input, request payload)
-
-```python
-class ProcessTreeBuilder:
-    def __init__(self, locales: dict, config: TreeBuilderConfig) -> None: ...
-    def build(self, nodes: list[ProcessNode], raw_modules: pl.DataFrame) -> str: ...
-```
+## Configuration
+- Global config: class `Config(BaseSettings)` in `config.py` next to `main.py`,
+  composes sub-configs via `Field(default_factory=...)`, exposes
+  `to_log() -> dict[str, object]`.
+- Each infrastructure connector has its own `BaseSettings` config in
+  `infrastructure/config.py`. Env params: `Field(alias="ENV_NAME")`; required
+  params: `Field(default=..., alias=...)` (Ellipsis → must be set). Do NOT set
+  `model_config = SettingsConfigDict(env_file=...)`. Every config has `to_log()`
+  with secrets masked (`"api_key_set": bool(self.api_key)`).
+- Domain config (if any): frozen slotted stdlib `dataclass` — domain never depends
+  on pydantic-settings. Other layers may use pydantic/attrs freely.
+- `Config` is instantiated once in `main()` and enters the DI container via
+  `from_context`; classes never read environment variables directly.
+- Tunable numbers (retries, backoff, timeouts, cache sizes) are config fields
+  injected via `__init__`, never module-level constants like `MAX_RETRIES = 5`.
+  Other constants live in the layer that uses them; infrastructure constants
+  never live in domain.
 
 ## DTO Placement
-Use-case result DTOs (e.g. `AnalysisResult`) belong in `application/` (ports or dto.py), NOT in `domain/`.
-Domain layer contains only entities, value objects, and domain logic.
+Use-case result DTOs belong in `application/dto.py`, not in `domain/`. Enums shared
+across application/infrastructure also belong in `application/dto.py`, never in
+`config.py` (config imports infra dependencies).
 
-## Constants Placement
-Constants live in the layer that uses them.
-- Domain constants → `domain/config.py` (as dataclass fields)
-- Infrastructure constants (e.g. `MODULE_DEFINITIONS`) → infrastructure layer
-- Never place infrastructure constants in domain.
-
-## Configuration Objects
-Prefer structured objects over raw dicts for configuration.
-- Domain layer: only native stdlib (`dataclasses`, `NamedTuple`). No pydantic, no third-party.
-- Application / Infrastructure / Presentation: pydantic, pydantic-settings, attrs and other libraries are fine.
-
-## Layer Dependency Rules
-- `domain` → imports nothing outside domain (no framework, no infra).
-- `application` → imports from `domain` only.
-- `infrastructure` → imports from `domain` and `application`.
-- `presentation` → imports from `application` (and `domain` types if needed).
-- `main.py` → imports everything, wires the graph.
+## DI (dishka) & Entrypoint
+- Providers live in `infrastructure/di/providers.py`; never stash objects on `app.state`.
+- HTTP handlers receive dependencies via `FromDishka[...]` + `@inject`.
+- Adapters needing cleanup are provided as async generators
+  (`yield adapter; await adapter.close()`), finalized on container close.
+- `presentation/api/app.py` exposes `create_app() -> FastAPI`; `main.py` exposes
+  `def main() -> None` and ends with `if __name__ == "__main__": main()`.
+- Run via `python -m` / `[project.scripts]`, NOT `uvicorn module:app`.
