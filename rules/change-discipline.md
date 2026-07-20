@@ -23,6 +23,18 @@ Before non-trivial implementation, state key assumptions in 1-2 lines.
 - Genuinely blocked by a decision only the user can make → ask; otherwise pick a
   sensible default and proceed.
 
+## Branch Size
+Before starting a new unit of work on an existing branch, check what it already
+carries: `git diff --stat <target-branch>...HEAD`. Past ~400 changed lines of
+hand-written code or ~20 files — excluding generated files, lockfiles, and mechanical
+migrations — land what is there before adding more: say so, and propose where to cut.
+Reviewers lose defects in large diffs, so the ceiling belongs to them, not to you.
+Work already in progress gets finished; the check gates starting more, never
+abandoning what is half-done.
+A whole new service, worker, or module lands as one branch when splitting it would
+ship something that runs nowhere — name that reason explicitly rather than letting
+the ceiling pass unmentioned.
+
 ## Definition of Done
 Done = demonstrated, not assumed: tests green + lint clean + the affected path
 actually exercised (run the service/endpoint/script). Report what you ran and saw,

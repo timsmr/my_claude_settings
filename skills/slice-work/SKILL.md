@@ -17,8 +17,14 @@ Each slice:
 - cuts a **narrow but complete path through every layer** it touches (schema, port,
   use-case, adapter, presentation, tests) — vertical, never a horizontal layer of one;
 - is demoable or verifiable on its own;
-- is sized to fit **one fresh context window**;
+- is sized to fit **one fresh context window** — the agent's budget;
+- is sized to fit **one review**: ~400 changed lines of hand-written code, ~20 files —
+  the reviewer's budget, and the binding one when the two disagree;
 - declares its **blocking edges**: the slices that must finish before it can start.
+
+Two slices that each fit a context window can still merge into one unreviewable
+branch. When a slice is projected to exceed the review budget, split it before
+writing any code, and say which seam you split on.
 
 Do any prefactoring first, as its own slice — make the change easy, then make the easy
 change.
