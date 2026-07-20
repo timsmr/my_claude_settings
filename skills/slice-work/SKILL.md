@@ -32,6 +32,22 @@ change.
 Work the **frontier**: any slice whose blockers are all done. One slice at a time,
 clearing context between them.
 
+## Stacked branches
+
+A slice may sit on the previous slice's branch rather than on `main`. Each branch is
+then reviewed against its **parent**, so the review budget applies per branch, not to
+the stack. Merge bottom-up; when a parent gains review fixes, rebase the rest of the
+stack onto it.
+
+Stacking changes where a branch starts, never how the work is cut. Splitting a stack
+by layer — skeleton, then logic, then tests — produces one branch that runs nowhere and
+one that ships untested code, and neither can be reviewed on its own merits. Cut the
+stack the same way as any slice: each branch a complete path, carrying its own tests,
+landing green.
+
+The exceptions are the sequences that are horizontal by nature and green at every step:
+expand–contract below, and a prefactor that lands before the change it enables.
+
 ## Wide refactors
 
 A **wide refactor** is one mechanical change — rename a field, retype a shared symbol —

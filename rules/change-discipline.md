@@ -25,7 +25,8 @@ Before non-trivial implementation, state key assumptions in 1-2 lines.
 
 ## Branch Size
 Before starting a new unit of work on an existing branch, check what it already
-carries: `git diff --stat <target-branch>...HEAD`. Past ~400 changed lines of
+carries: `git diff --stat <base>...HEAD`, where base is the branch this one merges
+into — in a stack of branches that is its parent, not `main`. Past ~400 changed lines of
 hand-written code or ~20 files — excluding generated files, lockfiles, and mechanical
 migrations — land what is there before adding more: say so, and propose where to cut.
 Reviewers lose defects in large diffs, so the ceiling belongs to them, not to you.
