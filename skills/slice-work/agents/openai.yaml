@@ -1,0 +1,5 @@
+interface:
+  display_name: "Slice Work"
+  short_description: "Split large work into vertical slices"
+policy:
+  allow_implicit_invocation: false
