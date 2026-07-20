@@ -1,0 +1,3 @@
+interface:
+  display_name: "Scaffold Python Service"
+  short_description: "Hexagonal service skeleton and recipes"

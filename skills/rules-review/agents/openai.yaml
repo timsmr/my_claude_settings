@@ -1,0 +1,3 @@
+interface:
+  display_name: "Rules Review"
+  short_description: "Audit global rules and skills"
